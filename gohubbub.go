@@ -93,19 +93,39 @@ func (client *Client) Unsubscribe(topic string) {
 	}
 }
 
+// StartServer starts a server using DefaultServeMux, and makes initial
+// subscription requests.
 func (client *Client) StartServer() {
-	client.running = true
+	client.RegisterHandler(http.DefaultServeMux)
+
+	// For default server give other paths a noop endpoint.
+	http.HandleFunc("/", client.handleDefaultRequest)
 
 	// Trigger subscription requests async.
-	for _, subscription := range client.subscriptions {
-		go client.makeSubscriptionRequest(subscription)
-	}
+	go client.Run()
 
-	// Start the server.
-	http.HandleFunc("/", client.handleRequest)
-	http.HandleFunc("/callback/", client.handleCallback)
 	log.Printf("Starting HTTP server on port %d", client.port)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", client.port), nil))
+}
+
+// RegisterHandler binds the client's HandlerFunc to the provided MUX on the
+// path /push-callback/
+func (client *Client) RegisterHandler(mux *http.ServeMux) {
+	mux.HandleFunc("/push-callback/", client.handleCallback)
+}
+
+// Run makes the initial subscription requests and mark the client as running.
+// Before calling RegisterHandler should be called with to a running server.
+func (client *Client) Run() {
+	if client.running {
+		return
+	}
+
+	client.running = true
+
+	for _, subscription := range client.subscriptions {
+		client.makeSubscriptionRequest(subscription)
+	}
 }
 
 // String provides a textual representation of the client's current state.
@@ -160,18 +180,18 @@ func (client *Client) makeUnsubscribeRequeast(subscription *Subscription) {
 		log.Printf("Unsubscribe failed, %s, %s", *subscription, err)
 
 	} else if resp.StatusCode != 202 {
-		log.Printf("Unsubscribe failed, %s status = %d", *subscription, resp.Status)
+		log.Printf("Unsubscribe failed, %s status = %s", *subscription, resp.Status)
 	}
 }
 
 func (client *Client) formatCallbackURL(callback int) string {
-	return fmt.Sprintf("http://%s:%d/callback/%d", client.self, client.port, callback)
+	return fmt.Sprintf("http://%s:%d/push-callback/%d", client.self, client.port, callback)
 }
 
-func (client *Client) handleRequest(resp http.ResponseWriter, req *http.Request) {
+func (client *Client) handleDefaultRequest(resp http.ResponseWriter, req *http.Request) {
 	resp.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	resp.Write([]byte("Hello!"))
-	log.Println("Request Received!")
+	resp.Write([]byte("gohubbub ok"))
+	log.Println("Request on", req.URL.Path)
 }
 
 func (client *Client) handleCallback(resp http.ResponseWriter, req *http.Request) {

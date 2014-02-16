@@ -7,6 +7,8 @@ for Go (golang).
 Example
 -------
 
+gohubbub can start its own HTTP server:
+
 ```go
 import "github.com/dpup/gohubbub"
 
@@ -16,9 +18,30 @@ client := gohubbub.NewClient(hubURL, hostname, port, "Testing")
 client.Subscribe(topicURL, func(contentType string, body []byte) {
   // Handle update notification.
 })
+client.StartServer()
 ```
 
-See this simple [program](./example/example.go) for a functioning example.
+Or if you have your own server, you can register the gohubbub request handler on
+your own mux and then call `client.Run()` when your server is running:
+
+```go
+import "github.com/dpup/gohubbub"
+
+// ...
+
+client := gohubbub.NewClient(hubURL, hostname, port, "Testing")
+client.Subscribe(topicURL, func(contentType string, body []byte) {
+  // Handle update notification.
+})
+client.RegisterHandler(myMux)
+
+// ...
+
+client.Run()
+
+```
+
+See this simple [program](./example/example.go) for a fully functioning example.
 You will need to run it from a machine that is publicly accessible or use
 [reverse port forwarding](https://medium.com/dev-tricks/220030f3c84a) from one
 that is.
