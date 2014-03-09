@@ -41,7 +41,7 @@ func main() {
 
 	log.Println("Medium Story Watcher Started...")
 
-	client := gohubbub.NewClient("http://medium.superfeedr.com", *host, *port, "Test App")
+	client := gohubbub.NewClient("http://medium.superfeedr.com", *host, *port, "MediumStoryWatcher")
 	client.Subscribe("https://medium.com/feed/latest", func(contentType string, body []byte) {
 		var feed Feed
 		xmlError := xml.Unmarshal(body, &feed)
@@ -56,7 +56,7 @@ func main() {
 		}
 	})
 
-	go client.StartServer()
+	go client.StartAndServe()
 
 	time.Sleep(time.Second * 5)
 	log.Println("Press Enter for graceful shutdown...")

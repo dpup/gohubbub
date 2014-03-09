@@ -22,11 +22,11 @@ import (
 
 // Struct for storing information about a subscription.
 type Subscription struct {
-	topic    string
-	id       int
-	handler  func(string, []byte) // Content-Type, ResponseBody
-	lease    time.Duration
-	verified bool
+	topic      string
+	id         int
+	handler    func(string, []byte) // Content-Type, ResponseBody
+	lease      time.Duration
+	verifiedAt time.Time
 }
 
 func (s Subscription) String() string {
@@ -74,7 +74,11 @@ func NewClient(hubURL string, self string, port int, from string) *Client {
 // an update notification is received.  If a handler already exists it will be
 // overridden.
 func (client *Client) Subscribe(topic string, handler func(string, []byte)) {
-	subscription := &Subscription{topic, len(client.subscriptions), handler, 0, false}
+	subscription := &Subscription{
+		topic:   topic,
+		id:      len(client.subscriptions),
+		handler: handler,
+	}
 	client.subscriptions[topic] = subscription
 	if client.running {
 		client.makeSubscriptionRequest(subscription)
@@ -93,16 +97,16 @@ func (client *Client) Unsubscribe(topic string) {
 	}
 }
 
-// StartServer starts a server using DefaultServeMux, and makes initial
+// StartAndServe starts a server using DefaultServeMux, and makes initial
 // subscription requests.
-func (client *Client) StartServer() {
+func (client *Client) StartAndServe() {
 	client.RegisterHandler(http.DefaultServeMux)
 
 	// For default server give other paths a noop endpoint.
 	http.HandleFunc("/", client.handleDefaultRequest)
 
 	// Trigger subscription requests async.
-	go client.Run()
+	go client.Start()
 
 	log.Printf("Starting HTTP server on port %d", client.port)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", client.port), nil))
@@ -114,18 +118,15 @@ func (client *Client) RegisterHandler(mux *http.ServeMux) {
 	mux.HandleFunc("/push-callback/", client.handleCallback)
 }
 
-// Run makes the initial subscription requests and mark the client as running.
+// Start makes the initial subscription requests and marks the client as running.
 // Before calling RegisterHandler should be called with to a running server.
-func (client *Client) Run() {
+func (client *Client) Start() {
 	if client.running {
 		return
 	}
 
 	client.running = true
-
-	for _, subscription := range client.subscriptions {
-		client.makeSubscriptionRequest(subscription)
-	}
+	client.ensureSubscribed()
 }
 
 // String provides a textual representation of the client's current state.
@@ -139,11 +140,26 @@ func (client Client) String() string {
 	return fmt.Sprintf("%d subscription(s): %v", len(client.subscriptions), urls)
 }
 
+func (client *Client) ensureSubscribed() {
+	for _, subscription := range client.subscriptions {
+		// Try to renew the subscription if the lease expires within an hour.
+		oneHourAgo := time.Now().Add(-time.Hour)
+		expireTime := subscription.verifiedAt.Add(subscription.lease)
+		log.Println(oneHourAgo, expireTime)
+		if expireTime.Before(oneHourAgo) {
+			client.makeSubscriptionRequest(subscription)
+		}
+	}
+	time.AfterFunc(time.Minute, client.ensureSubscribed)
+}
+
 func (client *Client) makeSubscriptionRequest(subscription *Subscription) {
-	log.Println("Subscribing to", subscription.topic)
+	callbackUrl := client.formatCallbackURL(subscription.id)
+
+	log.Println("Subscribing to", subscription.topic, "waiting for callback on", callbackUrl)
 
 	body := url.Values{}
-	body.Set("hub.callback", client.formatCallbackURL(subscription.id))
+	body.Set("hub.callback", callbackUrl)
 	body.Add("hub.topic", subscription.topic)
 	body.Add("hub.mode", "subscribe")
 	// body.Add("hub.lease_seconds", "60")
@@ -209,7 +225,7 @@ func (client *Client) handleCallback(resp http.ResponseWriter, req *http.Request
 	switch params.Get("hub.mode") {
 	case "subscribe":
 		if subscription, exists := client.subscriptions[topic]; exists {
-			subscription.verified = true
+			subscription.verifiedAt = time.Now()
 			lease, err := strconv.Atoi(params.Get("hub.lease_seconds"))
 			if err == nil {
 				subscription.lease = time.Second * time.Duration(lease)

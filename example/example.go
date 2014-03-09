@@ -60,7 +60,7 @@ func main() {
 		}
 	})
 
-	go client.StartServer()
+	go client.StartAndServe()
 
 	time.Sleep(time.Second * 5)
 	log.Println("Press Enter for graceful shutdown...")

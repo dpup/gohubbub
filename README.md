@@ -18,7 +18,7 @@ client := gohubbub.NewClient(hubURL, hostname, port, "Testing")
 client.Subscribe(topicURL, func(contentType string, body []byte) {
   // Handle update notification.
 })
-client.StartServer()
+client.StartAndServe()
 ```
 
 Or if you have your own server, you can register the gohubbub request handler on
@@ -37,7 +37,7 @@ client.RegisterHandler(myMux)
 
 // ...
 
-client.Run()
+client.Start()
 
 ```
 
