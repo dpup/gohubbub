@@ -6,8 +6,6 @@
 // registered on subscription.
 package gohubbub
 
-// TODO: Renew lease.
-
 import (
 	"bytes"
 	"fmt"
@@ -145,7 +143,6 @@ func (client *Client) ensureSubscribed() {
 		// Try to renew the subscription if the lease expires within an hour.
 		oneHourAgo := time.Now().Add(-time.Hour)
 		expireTime := subscription.verifiedAt.Add(subscription.lease)
-		log.Println(oneHourAgo, expireTime)
 		if expireTime.Before(oneHourAgo) {
 			client.makeSubscriptionRequest(subscription)
 		}
