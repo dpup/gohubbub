@@ -1,8 +1,8 @@
 // Copyright 2014 Daniel Pupius
 
 // Package gohubbub provides a PubSubHubbub subscriber client.  It will request
-// subscriptions from a hub and field responses as required by the prootcol.
-// Update notifications will be forwarded to the handler function that is
+// subscriptions from a hub and handle responses as required by the prootcol.
+// Update notifications will be forwarded to the handler function that was
 // registered on subscription.
 package gohubbub
 
@@ -20,7 +20,7 @@ import (
 )
 
 // Struct for storing information about a subscription.
-type Subscription struct {
+type subscription struct {
 	hub        string
 	topic      string
 	id         int
@@ -29,11 +29,11 @@ type Subscription struct {
 	verifiedAt time.Time
 }
 
-func (s Subscription) String() string {
+func (s subscription) String() string {
 	return fmt.Sprintf("%s (#%d %s)", s.topic, s.id, s.lease)
 }
 
-var NIL_SUBSCRIPTION = &Subscription{}
+var nilSubscription = &subscription{}
 
 // A HttpRequester is used to make HTTP requests.  http.Client{} satisfies this
 // interface.
@@ -41,8 +41,8 @@ type HttpRequester interface {
 	Do(req *http.Request) (resp *http.Response, err error)
 }
 
-// Client allows you to make PubSubHubbub subscriptions and register callback
-// handlers that will be executed when an update is received.
+// Client allows you to register a callback for PubSubHubbub subscriptions,
+// handlers will be executed when an update is received.
 type Client struct {
 	// Hostname or IP address that the client will be served from, should be
 	// accessible by the hub. e.g. "push.myhost.com"
@@ -51,7 +51,7 @@ type Client struct {
 	port          int                      // Which port the server will be started on.
 	from          string                   // String passed in the "From" header.
 	running       bool                     // Whether the server is running.
-	subscriptions map[string]*Subscription // Map of subscriptions.
+	subscriptions map[string]*subscription // Map of subscriptions.
 	httpRequester HttpRequester            // e.g. http.Client{}.
 }
 
@@ -61,12 +61,12 @@ func NewClient(self string, port int, from string) *Client {
 		port,
 		fmt.Sprintf("%s (gohubbub)", from),
 		false,
-		make(map[string]*Subscription),
+		make(map[string]*subscription),
 		&http.Client{}, // TODO: Use client with Timeout transport.
 	}
 }
 
-// Discover queries a feed for the hub which it is publishing to.
+// Discover queries an RSS or Atom feed for the hub which it is publishing to.
 func (client *Client) Discover(topic string) (string, error) {
 	resp, err := http.Get(topic)
 	if err != nil {
@@ -82,12 +82,12 @@ func (client *Client) Discover(topic string) (string, error) {
 		return "", fmt.Errorf("error reading feed response, %v", err)
 	}
 
-	var feed Feed
-	if xmlError := xml.Unmarshal(body, &feed); xmlError != nil {
+	var f feed
+	if xmlError := xml.Unmarshal(body, &f); xmlError != nil {
 		return "", fmt.Errorf("unable to parse xml, %v", xmlError)
 	}
 
-	links := append(feed.Link, feed.Channel.Link...)
+	links := append(f.Link, f.Channel.Link...)
 	for _, link := range links {
 		if link.Rel == "hub" {
 			return link.Href, nil
@@ -97,8 +97,8 @@ func (client *Client) Discover(topic string) (string, error) {
 	return "", fmt.Errorf("no hub found in feed")
 }
 
-// DiscoverAndSubscribe queries a feed for its hub and then sends a subscription
-// request.
+// DiscoverAndSubscribe queries an RSS or Atom feed for the hub which it is
+// publishing to, then subscribes for updates.
 func (client *Client) DiscoverAndSubscribe(topic string, handler func(string, []byte)) error {
 	hub, err := client.Discover(topic)
 	if err != nil {
@@ -108,28 +108,28 @@ func (client *Client) DiscoverAndSubscribe(topic string, handler func(string, []
 	return nil
 }
 
-// Subscribe adds a subscription to the client, the handler will be called when
-// an update notification is received.  If a handler already exists it will be
+// Subscribe adds a handler will be called when an update notification is
+// received.  If a handler already exists for the given topic it will be
 // overridden.
 func (client *Client) Subscribe(hub, topic string, handler func(string, []byte)) {
-	subscription := &Subscription{
+	s := &subscription{
 		hub:     hub,
 		topic:   topic,
 		id:      len(client.subscriptions),
 		handler: handler,
 	}
-	client.subscriptions[topic] = subscription
+	client.subscriptions[topic] = s
 	if client.running {
-		client.makeSubscriptionRequest(subscription)
+		client.makeSubscriptionRequest(s)
 	}
 }
 
 // Unsubscribe sends an unsubscribe notification and removes the subscription.
 func (client *Client) Unsubscribe(topic string) {
-	if subscription, exists := client.subscriptions[topic]; exists {
+	if s, exists := client.subscriptions[topic]; exists {
 		delete(client.subscriptions, topic)
 		if client.running {
-			client.makeUnsubscribeRequeast(subscription)
+			client.makeUnsubscribeRequeast(s)
 		}
 	} else {
 		log.Printf("Cannot unsubscribe, %s doesn't exist.", topic)
@@ -158,7 +158,7 @@ func (client *Client) RegisterHandler(mux *http.ServeMux) {
 }
 
 // Start makes the initial subscription requests and marks the client as running.
-// Before calling RegisterHandler should be called with to a running server.
+// Before calling, RegisterHandler should be called with a running server.
 func (client *Client) Start() {
 	if client.running {
 		return
@@ -180,61 +180,61 @@ func (client Client) String() string {
 }
 
 func (client *Client) ensureSubscribed() {
-	for _, subscription := range client.subscriptions {
+	for _, s := range client.subscriptions {
 		// Try to renew the subscription if the lease expires within an hour.
 		oneHourAgo := time.Now().Add(-time.Hour)
-		expireTime := subscription.verifiedAt.Add(subscription.lease)
+		expireTime := s.verifiedAt.Add(s.lease)
 		if expireTime.Before(oneHourAgo) {
-			client.makeSubscriptionRequest(subscription)
+			client.makeSubscriptionRequest(s)
 		}
 	}
 	time.AfterFunc(time.Minute, client.ensureSubscribed)
 }
 
-func (client *Client) makeSubscriptionRequest(subscription *Subscription) {
-	callbackUrl := client.formatCallbackURL(subscription.id)
+func (client *Client) makeSubscriptionRequest(s *subscription) {
+	callbackUrl := client.formatCallbackURL(s.id)
 
-	log.Println("Subscribing to", subscription.topic, "waiting for callback on", callbackUrl)
+	log.Println("Subscribing to", s.topic, "waiting for callback on", callbackUrl)
 
 	body := url.Values{}
 	body.Set("hub.callback", callbackUrl)
-	body.Add("hub.topic", subscription.topic)
+	body.Add("hub.topic", s.topic)
 	body.Add("hub.mode", "subscribe")
 	// body.Add("hub.lease_seconds", "60")
 
-	req, _ := http.NewRequest("POST", subscription.hub, bytes.NewBufferString(body.Encode()))
+	req, _ := http.NewRequest("POST", s.hub, bytes.NewBufferString(body.Encode()))
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Add("From", client.from)
 
 	resp, err := client.httpRequester.Do(req)
 
 	if err != nil {
-		log.Printf("Subscription failed, %s, %s", *subscription, err)
+		log.Printf("Subscription failed, %s, %s", *s, err)
 
 	} else if resp.StatusCode != 202 {
-		log.Printf("Subscription failed, %s, status = %s", *subscription, resp.Status)
+		log.Printf("Subscription failed, %s, status = %s", *s, resp.Status)
 	}
 }
 
-func (client *Client) makeUnsubscribeRequeast(subscription *Subscription) {
-	log.Println("Unsubscribing from", subscription.topic)
+func (client *Client) makeUnsubscribeRequeast(s *subscription) {
+	log.Println("Unsubscribing from", s.topic)
 
 	body := url.Values{}
-	body.Set("hub.callback", client.formatCallbackURL(subscription.id))
-	body.Add("hub.topic", subscription.topic)
+	body.Set("hub.callback", client.formatCallbackURL(s.id))
+	body.Add("hub.topic", s.topic)
 	body.Add("hub.mode", "unsubscribe")
 
-	req, _ := http.NewRequest("POST", subscription.hub, bytes.NewBufferString(body.Encode()))
+	req, _ := http.NewRequest("POST", s.hub, bytes.NewBufferString(body.Encode()))
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Add("From", client.from)
 
 	resp, err := client.httpRequester.Do(req)
 
 	if err != nil {
-		log.Printf("Unsubscribe failed, %s, %s", *subscription, err)
+		log.Printf("Unsubscribe failed, %s, %s", *s, err)
 
 	} else if resp.StatusCode != 202 {
-		log.Printf("Unsubscribe failed, %s status = %s", *subscription, resp.Status)
+		log.Printf("Unsubscribe failed, %s status = %s", *s, resp.Status)
 	}
 }
 
@@ -262,14 +262,14 @@ func (client *Client) handleCallback(resp http.ResponseWriter, req *http.Request
 
 	switch params.Get("hub.mode") {
 	case "subscribe":
-		if subscription, exists := client.subscriptions[topic]; exists {
-			subscription.verifiedAt = time.Now()
+		if s, exists := client.subscriptions[topic]; exists {
+			s.verifiedAt = time.Now()
 			lease, err := strconv.Atoi(params.Get("hub.lease_seconds"))
 			if err == nil {
-				subscription.lease = time.Second * time.Duration(lease)
+				s.lease = time.Second * time.Duration(lease)
 			}
 
-			log.Printf("Subscription verified for %s, lease is %s", topic, subscription.lease)
+			log.Printf("Subscription verified for %s, lease is %s", topic, s.lease)
 			resp.Write([]byte(params.Get("hub.challenge")))
 
 		} else {
@@ -295,37 +295,37 @@ func (client *Client) handleCallback(resp http.ResponseWriter, req *http.Request
 		// TODO: Don't do anything for now, should probably mark the subscription.
 
 	default:
-		subscription, exists := client.subscriptionForPath(req.URL.Path)
+		s, exists := client.subscriptionForPath(req.URL.Path)
 		if !exists {
 			log.Printf("Callback for unknown subscription: %s", req.URL.String())
 			http.Error(resp, "Unknown subscription", http.StatusBadRequest)
 
 		} else {
-			log.Printf("Update for %s", subscription)
+			log.Printf("Update for %s", s)
 			resp.Write([]byte{})
 
 			// Asynchronously notify the subscription handler, shouldn't affect response.
-			go subscription.handler(req.Header.Get("Content-Type"), requestBody)
+			go s.handler(req.Header.Get("Content-Type"), requestBody)
 		}
 	}
 
 }
 
-func (client *Client) subscriptionForPath(path string) (*Subscription, bool) {
+func (client *Client) subscriptionForPath(path string) (*subscription, bool) {
 	parts := strings.Split(path, "/")
 	if len(parts) != 3 {
-		return NIL_SUBSCRIPTION, false
+		return nilSubscription, false
 	}
 	id, err := strconv.Atoi(parts[2])
 	if err != nil {
-		return NIL_SUBSCRIPTION, false
+		return nilSubscription, false
 	}
-	for _, subscription := range client.subscriptions {
-		if subscription.id == id {
-			return subscription, true
+	for _, s := range client.subscriptions {
+		if s.id == id {
+			return s, true
 		}
 	}
-	return NIL_SUBSCRIPTION, false
+	return nilSubscription, false
 }
 
 // Protocol cheat sheet:
