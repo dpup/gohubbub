@@ -4,6 +4,8 @@ GoHubbub
 A [PubSubHubbub](https://pubsubhubbub.googlecode.com/) subscriber client library
 for Go (golang).
 
+For API documentation see https://godoc.org/github.com/dpup/gohubbub
+
 Example
 -------
 
