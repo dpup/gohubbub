@@ -44,8 +44,8 @@ func main() {
 
 	log.Println("PubSubHubbub Subscriber Started")
 
-	client := gohubbub.NewClient("http://pubsubhubbub.superfeedr.com", *host, *port, "Test App")
-	client.Subscribe("http://push-pub.appspot.com/feed", func(contentType string, body []byte) {
+	client := gohubbub.NewClient(*host, *port, "Test App")
+	err := client.DiscoverAndSubscribe("http://push-pub.appspot.com/feed", func(contentType string, body []byte) {
 		var feed Feed
 		xmlError := xml.Unmarshal(body, &feed)
 
@@ -53,12 +53,16 @@ func main() {
 			log.Printf("XML Parse Error %v", xmlError)
 
 		} else {
-			log.Println(feed.Status)
+			log.Println("Feed status:", feed.Status)
 			for _, entry := range feed.Entries {
 				log.Printf("%s - %s (%s)", entry.Title, entry.Content, entry.URL)
 			}
 		}
 	})
+
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	go client.StartAndServe()
 

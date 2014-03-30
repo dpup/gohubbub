@@ -14,8 +14,8 @@ import "github.com/dpup/gohubbub"
 
 // ...
 
-client := gohubbub.NewClient(hubURL, hostname, port, "Testing")
-client.Subscribe(topicURL, func(contentType string, body []byte) {
+client := gohubbub.NewClient(hostname, port, "Testing")
+client.DiscoverAndSubscribe(topicURL, func(contentType string, body []byte) {
   // Handle update notification.
 })
 client.StartAndServe()
@@ -29,8 +29,8 @@ import "github.com/dpup/gohubbub"
 
 // ...
 
-client := gohubbub.NewClient(hubURL, hostname, port, "Testing")
-client.Subscribe(topicURL, func(contentType string, body []byte) {
+client := gohubbub.NewClient(hostname, port, "Testing")
+client.DiscoverAndSubscribe(topicURL, func(contentType string, body []byte) {
   // Handle update notification.
 })
 client.RegisterHandler(myMux)

@@ -8,6 +8,7 @@ package gohubbub
 
 import (
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -20,6 +21,7 @@ import (
 
 // Struct for storing information about a subscription.
 type Subscription struct {
+	hub        string
 	topic      string
 	id         int
 	handler    func(string, []byte) // Content-Type, ResponseBody
@@ -42,9 +44,6 @@ type HttpRequester interface {
 // Client allows you to make PubSubHubbub subscriptions and register callback
 // handlers that will be executed when an update is received.
 type Client struct {
-	// URL of the PubSubHubbub Hub to make requests to.
-	hubURL string
-
 	// Hostname or IP address that the client will be served from, should be
 	// accessible by the hub. e.g. "push.myhost.com"
 	self string
@@ -56,9 +55,8 @@ type Client struct {
 	httpRequester HttpRequester            // e.g. http.Client{}.
 }
 
-func NewClient(hubURL string, self string, port int, from string) *Client {
+func NewClient(self string, port int, from string) *Client {
 	return &Client{
-		hubURL,
 		self,
 		port,
 		fmt.Sprintf("%s (gohubbub)", from),
@@ -68,11 +66,54 @@ func NewClient(hubURL string, self string, port int, from string) *Client {
 	}
 }
 
+// Discover queries a feed for the hub which it is publishing to.
+func (client *Client) Discover(topic string) (string, error) {
+	resp, err := http.Get(topic)
+	if err != nil {
+		return "", fmt.Errorf("unable to fetch feed, %v", err)
+	}
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("feed request failed, status code %d", resp.StatusCode)
+	}
+
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("error reading feed response, %v", err)
+	}
+
+	var feed Feed
+	if xmlError := xml.Unmarshal(body, &feed); xmlError != nil {
+		return "", fmt.Errorf("unable to parse xml, %v", xmlError)
+	}
+
+	links := append(feed.Link, feed.Channel.Link...)
+	for _, link := range links {
+		if link.Rel == "hub" {
+			return link.Href, nil
+		}
+	}
+
+	return "", fmt.Errorf("no hub found in feed")
+}
+
+// DiscoverAndSubscribe queries a feed for its hub and then sends a subscription
+// request.
+func (client *Client) DiscoverAndSubscribe(topic string, handler func(string, []byte)) error {
+	hub, err := client.Discover(topic)
+	if err != nil {
+		return fmt.Errorf("unable to find hub, %v", err)
+	}
+	client.Subscribe(hub, topic, handler)
+	return nil
+}
+
 // Subscribe adds a subscription to the client, the handler will be called when
 // an update notification is received.  If a handler already exists it will be
 // overridden.
-func (client *Client) Subscribe(topic string, handler func(string, []byte)) {
+func (client *Client) Subscribe(hub, topic string, handler func(string, []byte)) {
 	subscription := &Subscription{
+		hub:     hub,
 		topic:   topic,
 		id:      len(client.subscriptions),
 		handler: handler,
@@ -161,7 +202,7 @@ func (client *Client) makeSubscriptionRequest(subscription *Subscription) {
 	body.Add("hub.mode", "subscribe")
 	// body.Add("hub.lease_seconds", "60")
 
-	req, _ := http.NewRequest("POST", client.hubURL, bytes.NewBufferString(body.Encode()))
+	req, _ := http.NewRequest("POST", subscription.hub, bytes.NewBufferString(body.Encode()))
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Add("From", client.from)
 
@@ -183,7 +224,7 @@ func (client *Client) makeUnsubscribeRequeast(subscription *Subscription) {
 	body.Add("hub.topic", subscription.topic)
 	body.Add("hub.mode", "unsubscribe")
 
-	req, _ := http.NewRequest("POST", client.hubURL, bytes.NewBufferString(body.Encode()))
+	req, _ := http.NewRequest("POST", subscription.hub, bytes.NewBufferString(body.Encode()))
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Add("From", client.from)
 

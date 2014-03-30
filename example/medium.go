@@ -41,8 +41,8 @@ func main() {
 
 	log.Println("Medium Story Watcher Started...")
 
-	client := gohubbub.NewClient("http://medium.superfeedr.com", *host, *port, "MediumStoryWatcher")
-	client.Subscribe("https://medium.com/feed/latest", func(contentType string, body []byte) {
+	client := gohubbub.NewClient(*host, *port, "MediumStoryWatcher")
+	err := client.DiscoverAndSubscribe("https://medium.com/feed/latest", func(contentType string, body []byte) {
 		var feed Feed
 		xmlError := xml.Unmarshal(body, &feed)
 
@@ -55,6 +55,10 @@ func main() {
 			}
 		}
 	})
+
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	go client.StartAndServe()
 
