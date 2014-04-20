@@ -66,6 +66,12 @@ func NewClient(self string, port int, from string) *Client {
 	}
 }
 
+// HasSubscription returns true if a subscription exists for the topic.
+func (client *Client) HasSubscription(topic string) bool {
+	_, ok := client.subscriptions[topic]
+	return ok
+}
+
 // Discover queries an RSS or Atom feed for the hub which it is publishing to.
 func (client *Client) Discover(topic string) (string, error) {
 	resp, err := http.Get(topic)
