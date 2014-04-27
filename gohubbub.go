@@ -8,6 +8,8 @@ package gohubbub
 
 import (
 	"bytes"
+	"container/ring"
+	"crypto/md5"
 	"encoding/xml"
 	"fmt"
 	"io/ioutil"
@@ -35,6 +37,9 @@ func (s subscription) String() string {
 
 var nilSubscription = &subscription{}
 
+// Used to create callback URLs.
+var subscriptionIdCounter = 0
+
 // A HttpRequester is used to make HTTP requests.  http.Client{} satisfies this
 // interface.
 type HttpRequester interface {
@@ -53,6 +58,7 @@ type Client struct {
 	running       bool                     // Whether the server is running.
 	subscriptions map[string]*subscription // Map of subscriptions.
 	httpRequester HttpRequester            // e.g. http.Client{}.
+	history       *ring.Ring               // Stores past messages, for deduplication.
 }
 
 func NewClient(self string, port int, from string) *Client {
@@ -63,6 +69,7 @@ func NewClient(self string, port int, from string) *Client {
 		false,
 		make(map[string]*subscription),
 		&http.Client{}, // TODO: Use client with Timeout transport.
+		ring.New(50),
 	}
 }
 
@@ -121,10 +128,11 @@ func (client *Client) Subscribe(hub, topic string, handler func(string, []byte))
 	s := &subscription{
 		hub:     hub,
 		topic:   topic,
-		id:      len(client.subscriptions),
+		id:      subscriptionIdCounter,
 		handler: handler,
 	}
 	client.subscriptions[topic] = s
+	subscriptionIdCounter = subscriptionIdCounter + 1
 	if client.running {
 		client.makeSubscriptionRequest(s)
 	}
@@ -303,7 +311,7 @@ func (client *Client) handleCallback(resp http.ResponseWriter, req *http.Request
 	default:
 		s, exists := client.subscriptionForPath(req.URL.Path)
 		if !exists {
-			log.Printf("Callback for unknown subscription: %s", req.URL.String())
+			log.Printf("Callback for unknown subscription: %s %v", req.URL.String(), req.Header.Get("Link"))
 			http.Error(resp, "Unknown subscription", http.StatusBadRequest)
 
 		} else {
@@ -311,7 +319,7 @@ func (client *Client) handleCallback(resp http.ResponseWriter, req *http.Request
 			resp.Write([]byte{})
 
 			// Asynchronously notify the subscription handler, shouldn't affect response.
-			go s.handler(req.Header.Get("Content-Type"), requestBody)
+			go client.broadcast(s, req.Header.Get("Content-Type"), requestBody)
 		}
 	}
 
@@ -332,6 +340,28 @@ func (client *Client) subscriptionForPath(path string) (*subscription, bool) {
 		}
 	}
 	return nilSubscription, false
+}
+
+// broadcast dispatches the body of a message to the subscription handler, but
+// only if it isn't a duplicate.
+func (client *Client) broadcast(s *subscription, contentType string, body []byte) {
+	hash := md5.New().Sum(body)
+
+	// TODO: Use expiring cache if history size increases to handle higher message
+	// throughputs.
+	unique := true
+	client.history.Do(func(v interface{}) {
+		b, ok := v.([]byte)
+		if ok && bytes.Equal(hash, b) {
+			unique = false
+		}
+	})
+
+	if unique {
+		client.history.Value = hash
+		client.history = client.history.Next()
+		s.handler(contentType, body)
+	}
 }
 
 // Protocol cheat sheet:
