@@ -49,11 +49,10 @@ type HttpRequester interface {
 // Client allows you to register a callback for PubSubHubbub subscriptions,
 // handlers will be executed when an update is received.
 type Client struct {
-	// Hostname or IP address that the client will be served from, should be
-	// accessible by the hub. e.g. "push.myhost.com"
+	// Hostname or IP address and port that remote client will connect to, should
+	// be accessible by the hub. e.g. "push.myhost.com:4100"
 	self string
 
-	port          int                      // Which port the server will be started on.
 	from          string                   // String passed in the "From" header.
 	running       bool                     // Whether the server is running.
 	subscriptions map[string]*subscription // Map of subscriptions.
@@ -61,10 +60,9 @@ type Client struct {
 	history       *ring.Ring               // Stores past messages, for deduplication.
 }
 
-func NewClient(self string, port int, from string) *Client {
+func NewClient(self string, from string) *Client {
 	return &Client{
 		self,
-		port,
 		fmt.Sprintf("%s (gohubbub)", from),
 		false,
 		make(map[string]*subscription),
@@ -152,7 +150,7 @@ func (client *Client) Unsubscribe(topic string) {
 
 // StartAndServe starts a server using DefaultServeMux, and makes initial
 // subscription requests.
-func (client *Client) StartAndServe() {
+func (client *Client) StartAndServe(addr string, port int) {
 	client.RegisterHandler(http.DefaultServeMux)
 
 	// For default server give other paths a noop endpoint.
@@ -161,8 +159,8 @@ func (client *Client) StartAndServe() {
 	// Trigger subscription requests async.
 	go client.Start()
 
-	log.Printf("Starting HTTP server on port %d", client.port)
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", client.port), nil))
+	log.Printf("Starting HTTP server on %s:%d", addr, port)
+	log.Fatal(http.ListenAndServe(fmt.Sprintf("%s:%d", addr, port), nil))
 }
 
 // RegisterHandler binds the client's HandlerFunc to the provided MUX on the
@@ -253,7 +251,7 @@ func (client *Client) makeUnsubscribeRequeast(s *subscription) {
 }
 
 func (client *Client) formatCallbackURL(callback int) string {
-	return fmt.Sprintf("http://%s:%d/push-callback/%d", client.self, client.port, callback)
+	return fmt.Sprintf("http://%s/push-callback/%d", client.self, callback)
 }
 
 func (client *Client) handleDefaultRequest(resp http.ResponseWriter, req *http.Request) {

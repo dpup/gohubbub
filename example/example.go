@@ -44,7 +44,7 @@ func main() {
 
 	log.Println("PubSubHubbub Subscriber Started")
 
-	client := gohubbub.NewClient(*host, *port, "Test App")
+	client := gohubbub.NewClient(fmt.Sprintf("%s:%d", *host, *port), "Test App")
 	err := client.DiscoverAndSubscribe("http://push-pub.appspot.com/feed", func(contentType string, body []byte) {
 		var feed Feed
 		xmlError := xml.Unmarshal(body, &feed)
@@ -64,7 +64,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	go client.StartAndServe()
+	go client.StartAndServe("", *port)
 
 	time.Sleep(time.Second * 5)
 	log.Println("Press Enter for graceful shutdown...")

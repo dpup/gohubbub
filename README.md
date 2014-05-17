@@ -16,11 +16,11 @@ import "github.com/dpup/gohubbub"
 
 // ...
 
-client := gohubbub.NewClient(hostname, port, "Testing")
+client := gohubbub.NewClient("mysite.com", "Testing")
 client.DiscoverAndSubscribe(topicURL, func(contentType string, body []byte) {
   // Handle update notification.
 })
-client.StartAndServe()
+client.StartAndServe("", 80)
 ```
 
 Or if you have your own server, you can register the gohubbub request handler on
@@ -31,7 +31,7 @@ import "github.com/dpup/gohubbub"
 
 // ...
 
-client := gohubbub.NewClient(hostname, port, "Testing")
+client := gohubbub.NewClient("mysite.com", "Testing")
 client.DiscoverAndSubscribe(topicURL, func(contentType string, body []byte) {
   // Handle update notification.
 })
